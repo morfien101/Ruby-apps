@@ -33,7 +33,28 @@ WARNING_STATE=1
 CRITICAL_STATE=2
 UNKNOWN_STATE=3
 
-program_version = "0.0.1"
+def exit_converter(code,return_type)
+  case code
+  when OK_STATE
+    exit_code_number = 0
+    exit_code_word = "OK_STATE" 
+  when @WARNING_STATE
+    exit_code_number = 1
+    exit_code_word = "WARNING_STATE"
+  when @CRITICAL_STATE
+    exit_code_number = 2
+    exit_code_word = "CRITICAL_STATE"
+  else
+    exit_code_number = 3
+    exit_code_word = "UNKNOWN_STATE"
+  end
+
+  if return_type == 'text'
+    return exit_code_word
+  end
+end
+
+program_version = "0.0.2"
 
 #Create class that holds the values of the arguments.
 class Optparser
@@ -62,17 +83,11 @@ class Optparser
       opts.separator ""
       opts.separator "Usage example: http_checker.rb -m get -s http,ttps -b www.example1.com,www.expample2.com -p /index.html,/p/p2"
       opts.separator ""
-      opts.on("-m", "--method", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |m|
-        options.method = [] # Empty the list if values are passed in.
-        m.each do |method|
-          if @@supported_methods.include?(m)
-            @options.http_methods << m.downcase.capitilze
-          else
-            raise "Unsupported method passed in."
-          end
-        end
+
+      opts.on("-m", "--method", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |methods|
+        @options.methods = methods
       end
-      
+
       opts.on("-s", "--schema x,y", Array, "Supprted: http and/or https") do |schema|
         @options.schema = schema
       end
@@ -98,8 +113,8 @@ class Optparser
         @options.timeout = timeout
       end
 
-      opts.on("-e", "--expected_code N", Integer, "Expected HTTP code to be returned") do |return_code|
-        @options.expected_code = return_code
+      opts.on("-e", "--expected_codes N,N", Array, "Expected HTTP code to be returned") do |return_codes|
+        @options.expected_code = return_codes
       end
 
       opts.on("--verbose N", Integer, "Set verbose level (1 or 2)") do
@@ -182,8 +197,15 @@ def url_tester(method,schema,base_domain,page,query,expected_code,timeout,header
 end
 
 # Check the HTTP status codes against our expected response.
-def code_parser(test_results)
-  if response_code == expected_code
+def code_parser(returned_code,expected_code)
+  code_status = false
+  expected_code.each { |code| 
+    if returned_code == code.to_i
+      code_status = true
+    end
+  }
+
+  if code_status
     exitcode = OK_STATE
   else
     exitcode = CRITICAL_STATE
@@ -211,12 +233,14 @@ schema.each { |schema|
 # Check the status code against the expected code.
 # Set the exit code if the http codes do not match.
 url_list.map { |url,metric|
-  if metric[:http_code] != expected_code
-    state = "Critical"
-    exitcode = CRITICAL_STATE
-  else
-    state = "OK"
-  end
+  #if metric[:http_code] != expected_code
+  #  state = "Critical"
+  #  exitcode = CRITICAL_STATE
+  #else
+  #  state = "OK"
+  #end
+
+  state = code_parser metric[:http_code], expected_code
 
   if !metric[:response_time].nil?
     time = metric[:response_time]
@@ -225,7 +249,7 @@ url_list.map { |url,metric|
   end
   # Send human data to STDOUT.
   # Nagios tests pick this up as meta data and is often readable in tests.
-  puts "tested #{url} got: #{metric[:http_code]}, expected #{expected_code}. Time to serve: #{time} Status #{state}."
+  puts "tested #{url} got: #{metric[:http_code]}, expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state,'text')}."
   # being padantic so if something goes wrong the same state is not used on
   # multiple tested urls.
   state = nil
