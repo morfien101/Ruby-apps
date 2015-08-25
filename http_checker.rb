@@ -27,6 +27,8 @@ require 'optparse'
 require 'ostruct'
 require 'pp'
 
+program_version = "0.0.3"
+
 # Setup constants that represent the nagios exit codes.
 OK_STATE=0
 WARNING_STATE=1
@@ -38,10 +40,10 @@ def exit_converter(code,return_type)
   when OK_STATE
     exit_code_number = 0
     exit_code_word = "OK_STATE" 
-  when @WARNING_STATE
+  when WARNING_STATE
     exit_code_number = 1
     exit_code_word = "WARNING_STATE"
-  when @CRITICAL_STATE
+  when CRITICAL_STATE
     exit_code_number = 2
     exit_code_word = "CRITICAL_STATE"
   else
@@ -49,12 +51,68 @@ def exit_converter(code,return_type)
     exit_code_word = "UNKNOWN_STATE"
   end
 
-  if return_type == 'text'
+  if return_type == :text
     return exit_code_word
   end
 end
 
-program_version = "0.0.2"
+class Logger
+  @@debug_enabled=false
+  @@verbose_enabled=false
+  #@@warn=false
+  #@@critical=false
+
+  def enable_debug(trigger)
+    if trigger
+      @@debug_enabled=true
+    end
+  end
+
+  def debug_message(msg)
+    if @@debug_enabled
+      puts msg
+    end
+  end
+
+  def debug_exec(&block)
+    if @@debug_enabled
+      yield 
+    end
+  end
+
+  def enable_verbose(trigger)
+    if trigger
+      @@verbose_enabled=true
+    end
+  end
+
+  def verbose_message(msg)
+    if @@verbose_enabled
+      puts msg
+    end
+  end
+
+  def verbose_exec(&block)
+    if @@verbose_enabled
+      yield 
+    end
+  end
+end
+
+def exitcode_filter(exitcodes_array)
+  return_code = 0
+  exitcodes_array.each { |code|
+    if code == WARNING_STATE && return_code < WARNING_STATE
+      return_code = WARNING_STATE
+    elsif code == CRITICAL_STATE && return_code < CRITICAL_STATE
+      return_code = CRITICAL_STATE
+    elsif code == UNKNOWN_STATE && return_code < UNKNOWN_STATE
+      return_code = UNKNOWN_STATE
+    end
+  }
+  return return_code
+end
+
 
 #Create class that holds the values of the arguments.
 class Optparser
@@ -75,7 +133,7 @@ class Optparser
     @options = OpenStruct.new
     @options.method = ['get']
     @options.debug = false
-    @options.verbose = 0
+    @options.verbose = false
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = "http checker that combines arryas of options to make a list of links to check"
@@ -108,8 +166,7 @@ class Optparser
         @options.headers = headers
       end
 
-      opts.on("-t", "--timeout N", Integer, "Time out in seconds. D
-        efault if unset is 2 seconds.") do |timeout|
+      opts.on("-t", "--timeout N", Integer, "Time out in seconds. Default if unset is 2 seconds.") do |timeout|
         @options.timeout = timeout
       end
 
@@ -117,8 +174,8 @@ class Optparser
         @options.expected_code = return_codes
       end
 
-      opts.on("--verbose N", Integer, "Set verbose level (1 or 2)") do
-        @options.verbose_level = 1
+      opts.on("--verbose", Integer, "Set verbose on or off.") do
+        @options.verbose = true
       end
 
       opts.on("--version", "Show version") do
@@ -141,10 +198,12 @@ end # class Optparser
 
 options = Optparser.parse(ARGV)
 
-if options.debug
-  puts "options list"
-  pp options
-end
+logger=Logger.new
+logger.enable_debug(options.debug)
+logger.enable_verbose(options.verbose)
+
+logger.debug_message "options list: "
+logger.debug_exec { pp options }
 
 if options.show_version
   puts program_version
@@ -179,9 +238,7 @@ def url_tester(method,schema,base_domain,page,query,expected_code,timeout,header
     if !headers.empty?
       headers.each { |header|
         header_array = header.split(':', 2)
-        puts "header_array: #{header_array}"
-        puts header_array[0]
-        puts header_array[1]
+        logger.debug_message "header_array: #{header_array}"
         request.initialize_http_header({header_array[0] => header_array[1]})
       }
     end
@@ -197,7 +254,7 @@ def url_tester(method,schema,base_domain,page,query,expected_code,timeout,header
 end
 
 # Check the HTTP status codes against our expected response.
-def code_parser(returned_code,expected_code)
+def code_parser(returned_code,expected_code,logger)
   code_status = false
   expected_code.each { |code| 
     if returned_code == code.to_i
@@ -207,8 +264,10 @@ def code_parser(returned_code,expected_code)
 
   if code_status
     exitcode = OK_STATE
+    logger.debug_message "Set exit code to #{OK_STATE}. It is #{exitcode}"
   else
     exitcode = CRITICAL_STATE
+    logger.debug_message "Set exit code to #{CRITICAL_STATE}. It is #{exitcode}"
   end
 
   return exitcode
@@ -221,9 +280,8 @@ url_list = {}
 schema.each { |schema|
   base_domains.each { |base_domain|
     pages.each{ |page|
-      if options.debug
-        puts "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers})"
-      end
+      logger.debug_message "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers})"
+      
       url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers)
       url_list[url] = {http_code: http_code, response_time: response_time}
     }
@@ -232,27 +290,25 @@ schema.each { |schema|
 
 # Check the status code against the expected code.
 # Set the exit code if the http codes do not match.
+exitcodes = []
 url_list.map { |url,metric|
-  #if metric[:http_code] != expected_code
-  #  state = "Critical"
-  #  exitcode = CRITICAL_STATE
-  #else
-  #  state = "OK"
-  #end
 
-  state = code_parser metric[:http_code], expected_code
+  state = code_parser metric[:http_code], expected_code, logger
 
-  if !metric[:response_time].nil?
-    time = metric[:response_time]
-  else
+  if metric[:response_time].nil?
     time = "!Timed out!"
+  else
+    time = metric[:response_time]
   end
+  # Gather the exit codes to set the check exit code.
+  exitcodes << state
   # Send human data to STDOUT.
   # Nagios tests pick this up as meta data and is often readable in tests.
-  puts "tested #{url} got: #{metric[:http_code]}, expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state,'text')}."
+  logger.verbose_message "tested #{url} got: #{metric[:http_code]}. Expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}."
   # being padantic so if something goes wrong the same state is not used on
   # multiple tested urls.
   state = nil
 }
 
-exit exitcode
+final_exitcode = exitcode_filter exitcodes
+exit final_exitcode
