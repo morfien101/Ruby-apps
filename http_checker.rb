@@ -225,7 +225,7 @@ headers = !options.headers.nil? ? options.headers : []
 exitcode = 0
 
 # Tests the URLs and spit out the status code and full url.
-def url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers)
+def url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,logger)
 
   uri = URI.join("#{schema}://#{base_domain}",page)
   http = Net::HTTP.new(uri.host, uri.port)
@@ -280,9 +280,9 @@ url_list = {}
 schema.each { |schema|
   base_domains.each { |base_domain|
     pages.each{ |page|
-      logger.debug_message "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers})"
+      logger.debug_message "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers},logger)"
       
-      url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers)
+      url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,logger)
       url_list[url] = {http_code: http_code, response_time: response_time}
     }
   }
