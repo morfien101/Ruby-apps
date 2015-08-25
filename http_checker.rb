@@ -26,6 +26,7 @@ require 'net/http'
 require 'optparse'
 require 'ostruct'
 require 'pp'
+require 'openssl'
 
 program_version = "0.0.3"
 
@@ -134,6 +135,7 @@ class Optparser
     @options.method = ['get']
     @options.debug = false
     @options.verbose = false
+    @options.verify_https = false
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = "http checker that combines arryas of options to make a list of links to check"
@@ -174,7 +176,11 @@ class Optparser
         @options.expected_code = return_codes
       end
 
-      opts.on("--verbose", Integer, "Set verbose on or off.") do
+      opts.on("--verify_https",  "Turn on Ruby's builtin https verification.") do
+        @options.verify_https = true
+      end
+
+      opts.on("--verbose", "Set verbose on or off.") do
         @options.verbose = true
       end
 
@@ -219,17 +225,21 @@ query = options.query_string
 timeout=  !options.timeout.nil? ? options.timeout : 2
 expected_code = options.expected_code
 headers = !options.headers.nil? ? options.headers : []
+verify_https = options.verify_https
 
 # Default exit code.
 # Assume everything is golden at first.
 exitcode = 0
 
 # Tests the URLs and spit out the status code and full url.
-def url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,logger)
+def url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,https_verify,logger)
 
   uri = URI.join("#{schema}://#{base_domain}",page)
   http = Net::HTTP.new(uri.host, uri.port)
-  http.use_ssl = true ? schema == "https" : false
+  if schema == "https"
+    http.use_ssl = true
+    http.verify_mode = https_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
+  end
   http.open_timeout = timeout
 
   # Catch errors and set http status codes manually
@@ -282,7 +292,7 @@ schema.each { |schema|
     pages.each{ |page|
       logger.debug_message "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers},logger)"
       
-      url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,logger)
+      url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,verify_https,logger)
       url_list[url] = {http_code: http_code, response_time: response_time}
     }
   }
