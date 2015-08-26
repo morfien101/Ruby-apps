@@ -157,7 +157,7 @@ class Optparser
       end
 
       opts.on("-p", "--pages x,y,z", Array, "Pages to be checked") do |pages|
-        @options.pages = pages.map! {|page| page.downcase}
+        @options.pages = pages
       end
 
       opts.on("-q", "--query", "query options") do |query_string|
