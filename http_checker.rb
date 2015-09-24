@@ -132,7 +132,7 @@ class Optparser
     @@supported_methods = ['get','post','head']
     
     @options = OpenStruct.new
-    @options.method = ['get']
+    @options.request_type = ['get']
     @options.debug = false
     @options.verbose = false
     @options.verify_https = false
@@ -144,8 +144,8 @@ class Optparser
       opts.separator "Usage example: http_checker.rb -m get -s http,ttps -b www.example1.com,www.expample2.com -p /index.html,/p/p2"
       opts.separator ""
 
-      opts.on("-m", "--method", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |methods|
-        @options.methods = methods
+      opts.on("-m", "--request_type x,y", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |rq|
+        @options.request_type = rq
       end
 
       opts.on("-s", "--schema x,y", Array, "Supprted: http and/or https") do |schema|
@@ -218,7 +218,7 @@ end
 
 validation_errors = []
 # Required attributes
-method = options.methods
+method = options.request_type
 schema = options.schema
 base_domains = options.base_domains
 pages = options.pages
@@ -231,7 +231,6 @@ headers = !options.headers.nil? ? options.headers : []
 # Validate passed in arguments
 
 # -m --method
-puts method.class
 method_values = ['get','head','post']
 method.map! {|x| x.downcase}
 method.each { |x| 
@@ -278,8 +277,9 @@ unless timeout.is_a?(Fixnum)|| timeout.is_a?(Float)
 end
 
 # -e --expected_codes
+number_regex = /^\d+$/
 expected_code.each {|code|
-  unless code.is_a?(Fixnum)
+  if !code.match number_regex or code.to_i > 504
     validation_errors << "#{code} http code is not valid."
   end
 }
