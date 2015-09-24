@@ -192,7 +192,7 @@ class Optparser
         @options.debug = true
       end
     
-      opts.on_tail("-h", "--help", "Show this message") do
+      opts.on_tail("--help", "Show this message") do
             puts opts
             exit
         end
@@ -216,17 +216,81 @@ if options.show_version
   exit 0
 end
 
+validation_errors = []
 # Required attributes
-method = options.base_domains
+method = options.methods
 schema = options.schema
 base_domains = options.base_domains
 pages = options.pages
 query = options.query_string
-timeout=  !options.timeout.nil? ? options.timeout : 2
 expected_code = options.expected_code
-headers = !options.headers.nil? ? options.headers : []
 verify_https = options.verify_https
+timeout=  !options.timeout.nil? ? options.timeout : 2
+headers = !options.headers.nil? ? options.headers : []
 
+# Validate passed in arguments
+
+# -m --method
+puts method.class
+method_values = ['get','head','post']
+method.map! {|x| x.downcase}
+method.each { |x| 
+  unless method_values.include?(x) 
+    validation_errors << "Method values are not correct."
+  end
+}
+# -s --schema
+schema_values = ['http','https']
+schema.map! {|x| x.downcase}
+schema.each { |x| 
+  unless schema_values.include?(x) 
+    validation_errors << "schema values are not correct."
+  end
+}
+# -b --base_domains
+base_regex = /^([A-Za-z\-_0-9]+\.+)+[A-Za-z0-9]+$/
+base_domains.each {|bd|
+  unless bd.match(base_regex)
+    validation_errors << "#{bd} is a badly formed url."
+  end
+}
+# -p --pages
+pages_regex = /^[A-Za-z0-9\% \_\-\/\=]+$/
+pages.each {|page|
+  unless page.match(pages_regex)
+    validation_errors << "#{page} is a badly formed page."
+  end
+}
+# -q --query
+## Match this data
+## Not sure of the rule for this yet.
+
+# -h --headers
+headers_regex = /^[^\(\)\^\<\>\@\;\:\\\"\/\[\]\?\{\}]+\:.*$/
+headers.each {|header|
+  unless header.match(headers_regex)
+    validation_errors << "#{header} is a badly formed header pair."
+  end
+}
+# -t --timeout
+unless timeout.is_a?(Fixnum)|| timeout.is_a?(Float)
+  validation_errors << "The time out value is incorrect."
+end
+
+# -e --expected_codes
+expected_code.each {|code|
+  unless code.is_a?(Fixnum)
+    validation_errors << "#{code} http code is not valid."
+  end
+}
+
+if !validation_errors.empty?
+  logger.debug_message "#{validation_errors}"
+  validation_errors.each {|error|
+    puts error
+  }
+  exit 1
+end
 # Default exit code.
 # Assume everything is golden at first.
 exitcode = 0
