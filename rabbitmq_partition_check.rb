@@ -17,7 +17,7 @@
 
 # If running native ruby on CentOS 6 you will get ruby 1.8.7 :(
 # Include rubygems in that sad situation.
-if VERSION <= "1.8.7"
+if RUBY_VERSION <= "1.8.7"
 	require 'rubygems'
 end
 require 'net/http'
