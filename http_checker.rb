@@ -247,14 +247,23 @@ schema.each { |x|
   end
 }
 # -b --base_domains
-base_regex = /^([A-Za-z\-_0-9]+\.+)+[A-Za-z0-9]+$/
+base_regex_fqdn = /^([A-Za-z\-_0-9]+\.+)+[A-Za-z0-9]+$/
+base_regex_hostname = /^[A-Za-z0-9\-\_]+$/
+base_regex_ip = /^\d+\.\d+\.\d+\.\d+$/
+
 base_domains.each {|bd|
-  unless bd.match(base_regex)
-    validation_errors << "#{bd} is a badly formed url."
+  #if !(bd.match(base_regex_fqdn)) or !(bd.match(base_regex_hostname)) or !(bd.match(base_regex_ip))
+  case bd
+    when bd.match(base_regex_fqdn)
+      validation_errors << "#{bd} is a badly formed fqdn."
+    when bd.match(base_regex_hostname)
+      validation_errors << "#{bd} is a badly formed hostname."
+    when bd.match(base_regex_ip)
+      validation_errors << "#{bd} is a badly formed IP."
   end
 }
 # -p --pages
-pages_regex = /^[A-Za-z0-9\% \_\-\/\=]+$/
+pages_regex = /^[A-Za-z0-9\% \_\-\/\=\.]+$/
 pages.each {|page|
   unless page.match(pages_regex)
     validation_errors << "#{page} is a badly formed page."
