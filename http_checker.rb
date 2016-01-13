@@ -27,6 +27,7 @@ require 'optparse'
 require 'ostruct'
 require 'pp'
 require 'openssl'
+require 'thread'
 
 program_version = "0.0.3"
 
@@ -126,6 +127,7 @@ class Optparser
     # -h headers commad seperated
     # -t timeout in miliseconds as interger
     # -e expected HTTP code as integer
+    # -T Maximum thread count
     # --debug Used to debug the program
     # -v output detail level
 
@@ -136,12 +138,14 @@ class Optparser
     @options.debug = false
     @options.verbose = false
     @options.verify_https = false
+    @options.threads = 1
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = "http checker that combines arryas of options to make a list of links to check"
       opts.separator "Exit codes can be used with nagios checks"
       opts.separator ""
       opts.separator "Usage example: http_checker.rb -m get -s http,ttps -b www.example1.com,www.expample2.com -p /index.html,/p/p2"
+      opts.separator "Cancelling with Crtl^c, will cause the script to wait until the current threads are finish then exit cleanly."
       opts.separator ""
 
       opts.on("-m", "--request_type x,y", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |rq|
@@ -174,6 +178,10 @@ class Optparser
 
       opts.on("-e", "--expected_codes N,N", Array, "Expected HTTP code to be returned") do |return_codes|
         @options.expected_code = return_codes
+      end
+
+      opts.on("-T", "--threads N", Integer, "How many tests to run at once. unset and default = 1") do |threads|
+        @options.threads = threads.abs
       end
 
       opts.on("--verify_https",  "Turn on Ruby's builtin https verification.") do
@@ -227,6 +235,7 @@ expected_code = options.expected_code
 verify_https = options.verify_https
 timeout=  !options.timeout.nil? ? options.timeout : 2
 headers = !options.headers.nil? ? options.headers : []
+max_threads = options.threads
 
 # Validate passed in arguments
 
@@ -356,21 +365,50 @@ def code_parser(returned_code,expected_code,logger)
   return exitcode
 end
 
-url_list = {}
-
 # Go through the base urls and pages to test each combination.
 # Returns both the full url and the http status code.
+# counter to see how many threads are running
+current_threads = 0
+#create some locks to variables
+thread_counter_lock = Mutex.new
+update_url_lock = Mutex.new
+# Where to storge the results from the tests
+url_list = {}
+
 schema.each { |schema|
   base_domains.each { |base_domain|
     pages.each{ |page|
-      logger.debug_message "http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers},logger)"
-      
-      url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,verify_https,logger)
-      url_list[url] = {http_code: http_code, response_time: response_time}
+      while current_threads >= max_threads
+        logger.debug_message "waiting for thread slot to open\n  current_threads = #{current_threads}\n"
+        sleep 1 
+      end
+
+      logger.debug_message "starting thread for http method: url_tester(#{method},#{schema},#{base_domain},#{page},#{query}, #{expected_code}, #{timeout},#{headers},logger)"
+      # update the counter show a new thread is starting
+      thread_counter_lock.synchronize {
+        current_threads += 1
+      }
+      # create a thread for the url
+      Thread.new {
+        # do function for this thread
+        url,http_code, response_time = url_tester(method,schema,base_domain,page,query,expected_code,timeout,headers,verify_https,logger)
+        # update the array with the results.
+        update_url_lock.synchronize{
+          url_list[url] = {http_code: http_code, response_time: response_time}
+        }
+        # thread is about to end which means a new one can start
+        thread_counter_lock.synchronize {
+          current_threads -= 1
+        }
+      }
     }
   }
 }
 
+while current_threads > 0
+  sleep 1
+  logger.debug_message "waiting for last threads to finish. current threads running #{current_threads}"
+end
 # Check the status code against the expected code.
 # Set the exit code if the http codes do not match.
 exitcodes = []
