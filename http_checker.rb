@@ -463,7 +463,7 @@ def output_formatter(url_list, options, logger)
       output_string += line
     }
 
-    output_string += "| #{perf_data.join(",")}"
+    output_string += "| #{perf_data.join(" ")}"
   when "human"
     output = []
     # Check the status code against the expected code.
