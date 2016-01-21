@@ -456,7 +456,7 @@ def output_formatter(url_list, options, logger)
       # multiple tested urls.
       state = nil
 
-      perf_data << (url.gsub(/https?\:\/\//, "")).gsub(/[\.\/]/, "_") + "=" + time.to_s
+      perf_data << (url.gsub(/https?\:\/\//, "")).gsub(/[\.\/]/, "_") + "=" + time.to_s + "s"
     }
     output.each { |line|
       logger.debug_message "debug: outline -> #{line}"
