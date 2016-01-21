@@ -17,9 +17,11 @@
 
 # ToDo
 # [Done] Setup the options variables for the command line
-# * Checks for correct values passed in via arguments.
+# [Done] Checks for correct values passed in via arguments.
 # * Create functions for all supported methods
-# * Figure out why time is not taking effect correctly 
+# [Done] Figure out why time is not taking effect correctly (does work, it is the time out for connecting to the server not getting data back)
+# [Done] Put output in nagios with perfdata
+# [Done] Put output in JSON
 
 # required gems.
 require 'net/http'
@@ -28,6 +30,7 @@ require 'ostruct'
 require 'pp'
 require 'openssl'
 require 'thread'
+require 'json'
 
 program_version = "0.0.3"
 
@@ -128,6 +131,8 @@ class Optparser
     # -t timeout in miliseconds as interger
     # -e expected HTTP code as integer
     # -T Maximum thread count
+    # -f Format (json, nagios, human) default: human
+    # -D --alert-level (A,W,C) <All, Warning, Critical> Output to display 
     # --debug Used to debug the program
     # -v output detail level
 
@@ -139,6 +144,8 @@ class Optparser
     @options.verbose = false
     @options.verify_https = false
     @options.threads = 1
+    @options.format = "human"
+    @options.level = "A"
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = "http checker that combines arryas of options to make a list of links to check"
@@ -146,9 +153,10 @@ class Optparser
       opts.separator ""
       opts.separator "Usage example: http_checker.rb -m get -s http,ttps -b www.example1.com,www.expample2.com -p /index.html,/p/p2"
       opts.separator "Cancelling with Crtl^c, will cause the script to wait until the current threads are finish then exit cleanly."
+      opts.separator "output is only displayed if you use the --verbose flag."
       opts.separator ""
 
-      opts.on("-m", "--request_type x,y", Array, "HTTP Method for the request. supported methods: Get,Post,Head") do |rq|
+      opts.on("-m", "--request_type x,y", Array, "HTTP Method for the request. supported methods: Get") do |rq|
         @options.request_type = rq
       end
 
@@ -182,6 +190,14 @@ class Optparser
 
       opts.on("-T", "--threads N", Integer, "How many tests to run at once. unset and default = 1") do |threads|
         @options.threads = threads.abs
+      end
+
+      opts.on("-f", "--format name", "The output format, defaults to human. Available json, nagios and human.") do |format|
+        @options.format = format
+      end
+
+      opts.on("-D", "--alert-level name", "Alert level to display, Info, Warning and Critical. Available I,W,C") do |level|
+        @options.level = level.capitalize
       end
 
       opts.on("--verify_https",  "Turn on Ruby's builtin https verification.") do
@@ -302,6 +318,16 @@ expected_code.each {|code|
   end
 }
 
+# -f --format
+#format_regex = /'json'|'nagios'|'human'/
+if !(options.format == 'json' || options.format == 'nagios' || options.format == 'human')
+  validation_errors << "The format option #{options.format} is not valid."
+end
+
+if !(options.level == 'I' || options.level == 'W' || options.level == 'C')
+  validation_errors << "The warning level #{options.level} is not valid."
+end
+
 if !validation_errors.empty?
   logger.debug_message "#{validation_errors}"
   validation_errors.each {|error|
@@ -365,6 +391,118 @@ def code_parser(returned_code,expected_code,logger)
   return exitcode
 end
 
+def output_formatter(url_list, options, logger)
+  output_string = ""
+  exitcodes = []
+
+  case options.format
+  when "json"
+    response = Hash.new()
+    # Check the status code against the expected code.
+    # Set the exit code if the http codes do not match.
+    url_list.map { |url,metric|
+      state = code_parser(metric[:http_code], options.expected_code, logger)
+      if metric[:response_time].nil?
+        time = "!Timed out!"
+      else
+        time = metric[:response_time]
+      end
+      # Gather the exit codes to set the check exit code.
+      exitcodes << state
+      # url = {"response_code" => metric[:http_code], "time_to_server" => time, "test_status" => #{exit_converter(state, :text)} }
+      
+      if state == 0 && options.level == "I"
+        response[url] = {"response_code" => metric[:http_code], "time_to_server" => time, "test_status" => "#{exit_converter(state, :text)}"}
+      elsif state == 1 && (options.level == "W" || options.level == "I")
+        response[url] = {"response_code" => metric[:http_code], "time_to_server" => time, "test_status" => "#{exit_converter(state, :text)}"}
+      elsif state == 2 && (options.level == "C" || options.level == "I" || options.level == "W")
+        response[url] = {"response_code" => metric[:http_code], "time_to_server" => time, "test_status" => "#{exit_converter(state, :text)}"}
+      elsif state == 3
+        response[url] = {"errror" => "!ERROR! -> " + output_text}
+      end 
+      # being padantic so if something goes wrong the same state is not used on
+      # multiple tested urls.
+      state = nil
+    }
+    output_string = response.to_json
+  when "nagios"
+    output = []
+    perf_data = []
+    # Check the status code against the expected code.
+    # Set the exit code if the http codes do not match.
+    
+    url_list.map { |url,metric|
+      state = code_parser(metric[:http_code], options.expected_code, logger)
+      if metric[:response_time].nil?
+        time = "!Timed out!"
+      else
+        time = metric[:response_time]
+      end
+      # Gather the exit codes to set the check exit code.
+      exitcodes << state
+      # Send human data to STDOUT.
+      # Nagios tests pick this up as meta data and is often readable in tests.
+      output_text = "tested #{url} got: #{metric[:http_code]}. Expected #{options.expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}.\n"
+      if state == 0 && options.level == "I"
+        output.push(output_text)
+      elsif state == 1 && (options.level == "W" || options.level == "I")
+        output.push(output_text)
+      elsif state == 2 && (options.level == "C" || options.level == "I" || options.level == "W")
+        output.unshift(output_text)
+      elsif state == 3
+        output.unshift("!ERROR! -> " + output_text)
+      end 
+      # being padantic so if something goes wrong the same state is not used on
+      # multiple tested urls.
+      state = nil
+
+      perf_data << (url.gsub(/https?\:\/\//, "")).gsub(/[\.\/]/, "_") + "=" + time.to_s
+    }
+    output.each { |line|
+      logger.debug_message "debug: outline -> #{line}"
+      output_string += line
+    }
+
+    output_string += "| #{perf_data.join(",")}"
+  when "human"
+    output = []
+    # Check the status code against the expected code.
+    # Set the exit code if the http codes do not match.
+    
+    url_list.map { |url,metric|
+      state = code_parser(metric[:http_code], options.expected_code, logger)
+      if metric[:response_time].nil?
+        time = "!Timed out!"
+      else
+        time = metric[:response_time]
+      end
+      # Gather the exit codes to set the check exit code.
+      exitcodes << state
+      # Send human data to STDOUT.
+      # Nagios tests pick this up as meta data and is often readable in tests.
+      output_text = "tested #{url} got: #{metric[:http_code]}. Expected #{options.expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}.\n"
+      if state == 0 && options.level == "I"
+        output.push(output_text)
+      elsif state == 1 && (options.level == "W" || options.level == "I")
+        output.push(output_text)
+      elsif state == 2 && (options.level == "C" || options.level == "I" || options.level == "W")
+        output.unshift(output_text)
+      elsif state == 3
+        output.unshift("!ERROR! -> " + output_text)
+      end 
+      # being padantic so if something goes wrong the same state is not used on
+      # multiple tested urls.
+      state = nil
+    }
+    output.each { |line|
+      logger.debug_message "debug: outline -> #{line}"
+      output_string += line
+    }
+  end
+
+  return output_string, exitcodes
+end
+
 # Go through the base urls and pages to test each combination.
 # Returns both the full url and the http status code.
 # counter to see how many threads are running
@@ -409,27 +547,35 @@ while current_threads > 0
   sleep 1
   logger.debug_message "waiting for last threads to finish. current threads running #{current_threads}"
 end
+
+## The below will be replaced with the output filter that needs to be written.
+
 # Check the status code against the expected code.
 # Set the exit code if the http codes do not match.
-exitcodes = []
-url_list.map { |url,metric|
+#exitcodes = []
+#url_list.map { |url,metric|
+#  #state = code_parser(metric[:http_code], expected_code, logger)
+#  #
+#  #if metric[:response_time].nil?
+#  #  time = "!Timed out!"
+#  #else
+#  #  time = metric[:response_time]
+#  #end
+#  ## Gather the exit codes to set the check exit code.
+#  #exitcodes << state
+#  ## Send human data to STDOUT.
+#  ## Nagios tests pick this up as meta data and is often readable in tests.
+#  #logger.verbose_message "tested #{url} got: #{metric[:http_code]}. Expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}."
+#  ## being padantic so if something goes wrong the same state is not used on
+#  ## multiple tested urls.
+#  #state = nil
+#}
+#
+#final_exitcode = exitcode_filter exitcodes
+#exit final_exitcode
 
-  state = code_parser metric[:http_code], expected_code, logger
-
-  if metric[:response_time].nil?
-    time = "!Timed out!"
-  else
-    time = metric[:response_time]
-  end
-  # Gather the exit codes to set the check exit code.
-  exitcodes << state
-  # Send human data to STDOUT.
-  # Nagios tests pick this up as meta data and is often readable in tests.
-  logger.verbose_message "tested #{url} got: #{metric[:http_code]}. Expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}."
-  # being padantic so if something goes wrong the same state is not used on
-  # multiple tested urls.
-  state = nil
-}
-
+# pesudo code
+output, exitcodes = output_formatter(url_list, options, logger)
+logger.verbose_message output
 final_exitcode = exitcode_filter exitcodes
 exit final_exitcode
