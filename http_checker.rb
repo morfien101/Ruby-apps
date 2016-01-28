@@ -32,7 +32,7 @@ require 'openssl'
 require 'thread'
 require 'json'
 
-program_version = "0.0.3"
+program_version = "0.1.1"
 
 # Setup constants that represent the nagios exit codes.
 OK_STATE=0
@@ -146,6 +146,8 @@ class Optparser
     @options.threads = 1
     @options.format = "human"
     @options.level = "A"
+    @options.timeout = 2
+    @options.headers = []
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = "http checker that combines arryas of options to make a list of links to check"
@@ -249,8 +251,8 @@ pages = options.pages
 query = options.query_string
 expected_code = options.expected_code
 verify_https = options.verify_https
-timeout=  !options.timeout.nil? ? options.timeout : 2
-headers = !options.headers.nil? ? options.headers : []
+timeout= options.timeout
+headers = options.headers
 max_threads = options.threads
 
 # Validate passed in arguments
@@ -463,7 +465,11 @@ def output_formatter(url_list, options, logger)
       output_string += line
     }
 
-    output_string += "| #{perf_data.join(" ")}"
+    if output_string == ""
+      output_string += "No data to display"
+    end
+
+      output_string += "| #{perf_data.join(" ")}"
   when "human"
     output = []
     # Check the status code against the expected code.
@@ -498,6 +504,11 @@ def output_formatter(url_list, options, logger)
       logger.debug_message "debug: outline -> #{line}"
       output_string += line
     }
+
+    if output_string == ""
+      output_string += "No data to display"
+    end
+
   end
 
   return output_string, exitcodes
@@ -548,33 +559,6 @@ while current_threads > 0
   logger.debug_message "waiting for last threads to finish. current threads running #{current_threads}"
 end
 
-## The below will be replaced with the output filter that needs to be written.
-
-# Check the status code against the expected code.
-# Set the exit code if the http codes do not match.
-#exitcodes = []
-#url_list.map { |url,metric|
-#  #state = code_parser(metric[:http_code], expected_code, logger)
-#  #
-#  #if metric[:response_time].nil?
-#  #  time = "!Timed out!"
-#  #else
-#  #  time = metric[:response_time]
-#  #end
-#  ## Gather the exit codes to set the check exit code.
-#  #exitcodes << state
-#  ## Send human data to STDOUT.
-#  ## Nagios tests pick this up as meta data and is often readable in tests.
-#  #logger.verbose_message "tested #{url} got: #{metric[:http_code]}. Expected #{expected_code}. Time to serve: #{time} Status: #{exit_converter(state, :text)}."
-#  ## being padantic so if something goes wrong the same state is not used on
-#  ## multiple tested urls.
-#  #state = nil
-#}
-#
-#final_exitcode = exitcode_filter exitcodes
-#exit final_exitcode
-
-# pesudo code
 output, exitcodes = output_formatter(url_list, options, logger)
 logger.verbose_message output
 final_exitcode = exitcode_filter exitcodes
